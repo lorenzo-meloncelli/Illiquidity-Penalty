@@ -1,0 +1,25 @@
+Quando gamma scende verso zero, l'obiettivo diventa wTμ - T(L(w))
+L'ottimizzatore trova il mix che massimizza rendimento meno penalità e si "ferma" lì. Abbassare ancora gamma non cambia la soluzione.
+Il punto in cui si fermano dipende direttamente da quanto è aggressiva la penalità.
+
+Nell'Unpenalized non c'è nessuna soglia: Private Equity entra gradualmente nel portafoglio man mano che gamma scende, senza nessun cambio brusco. L'unico trade-off è rendimento vs varianza, che è continuo. Con la penalità invece hai un trade-off in più, rendimento vs varianza vs costo illiquidità. Questo terzo termine crea delle non-linearità nell'obiettivo che possono produrre cambi di regime bruschi nella composizione ottimale.
+
+Quali sono parametri e caratteristiche che determinano le marginal illiquidity curves. Non è solo la categoria (fondo pensione, endowment, o family office), c'è di più. Quando compri queste asset class stai bloccando capitale, quindi c'è una relazione con la maturity delle liabilities e degli attivi già esistenti. Non solo, bisogna considerare se il fondo è chiuso o aperto, e quindi se ci sono flussi di cassa dall'esterno (donazioni per endowments, active members del pension fund). Tutto cio è per il beta. L'alpha è più difficile da trovare senso pratico. Un'idea è quella di assimilarlo alla media della regressione lineare: il costo che paghi anche quando L tende a 0, semplicemente per il fatto di operare in mercati con attivi illiquidi (e.g., costo opportunità di avere capitale impegnato anche marginalmente).
+Due possibili approcci:
+-	Approccio simulativo, simuli scenari di mercato e liability per ogni profilo di investitore, misuri i costi realizzati di illiquidità, e fitta alpha e beta su quei costi
+-	Approccio econometrico, se hai dati osservati sui costi di illiquidità di fondi reali, stimi direttamente la relazione 
+
+GLOB_EQ, HF_FOF e GLOB_PE presentano correlazioni pairwise nell'ordine di 0.86-0.87, rendendo i primi due quasi perfetti sostituti del terzo. Poiché GLOB_PE offre il rendimento atteso più elevato (9.80%) a fronte di una volatilità comparabile, l'ottimizzatore lo seleziona come unico rappresentante del segmento illiquido, azzerando le allocazioni agli altri. Analogamente, sul lato liquido, GLOB_AGG domina MM_US per via del rendimento superiore a parità di contributo al vincolo di liquidità. Il risultato è un portafoglio biasset — GLOB_AGG e GLOB_PE
+
+Un costo negativo significa che il portafoglio reale supera il benchmark in quello scenario. Questo succede quando il drift di mercato sposta casualmente i pesi in modo favorevole — ma con 1000 scenari dovrebbe compensarsi. Il fatto che rimanga negativo suggerisce che a L=30% i lock-up sono così corti che il portafoglio si rebalancia quasi liberamente, e l'effetto del payout riduce leggermente la quota di GLOB_AGG liberando peso verso GLOB_PE che rende di più.
+
+Il fondo pensione gestisce un portafoglio di asset con diversi gradi di illiquidità. Ogni anno deve fare tre cose: pagare le pensioni agli iscritti, mantenere una riserva minima di liquidità, e riportare il portafoglio il più vicino possibile alla composizione ottimale.
+Il payout è il denaro che il fondo distribuisce ogni anno agli iscritti. Non è una percentuale fissa del patrimonio — è una percentuale delle passività residue del fondo. Le passività scendono nel tempo perché ci sono sempre meno iscritti da pagare, con una velocità che dipende dalla duration. Quando il fondo è in deficit (il patrimonio vale meno delle passività, FR<1), deve pagare di più per coprire il gap.
+La riserva di liquidità è la quota minima di asset liquidi che il fondo deve sempre mantenere per far fronte ai pagamenti. Se dopo il payout la quota liquida scende sotto questa soglia, il fondo è costretto a vendere asset illiquidi locked sul mercato secondario con uno sconto (haircut). Questo è il principale costo non lineare del modello — a livelli di illiquidità L alti, la riserva è già al minimo e basta poco perché scatti questa vendita forzata.
+Il rebalancing è il tentativo di tornare ai pesi ottimali dopo drift, payout e vendite forzate. È vincolato dai lock-up — le quote di asset acquistate di recente non possono essere ridotte fino alla scadenza del lock-up. Questo crea un gap permanente tra i pesi reali e quelli ottimali.
+Il benchmark è lo stesso portafoglio ma senza vincoli di lock-up — si rebalancia liberamente ogni anno. Paga lo stesso payout del portafoglio reale. La differenza di rendimento tra benchmark e portafoglio reale, sommata all'haircut pagato, è il costo dell'illiquidità quell'anno.
+
+Curva	Beta alto abbassa c(L) per L<1?	c(0)=0?	Comportamento ottimizzatore
+Power	✅ Sì — sempre per L<1	✅ Sì	Beta alto → accetta più PE
+Exponential	❌ No	❌ No	Beta alto → meno PE, ma instabile
+Quadratic	Parzialmente	✅ Sì	Beta aggiunge curvatura senza paradossi
