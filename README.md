@@ -1,5 +1,5 @@
 # illiquidity_penalty
-Pricing illiquidity in Strategic Asset Allocation: a calibration framework for asset allocation practitioners
+## Pricing illiquidity in Strategic Asset Allocation: a calibration framework for asset allocation practitioners
 
 Project Overview: Strategic Asset Allocation with illiquid asset classes is increasingly central for institutional investors, yet existing frameworks struggle to incorporate illiquidity in a transparent and rigorous way. The penalty cost approach proposed by Hayes, Primbs, and Chiquoine (2015) extends the Markowitz mean-variance framework through a marginal illiquidity penalty curve that reflects portfolio-level liquidity preferences. However, the identification of this curve is left largely to subjective judgement, limiting its practical use. This project, developed with Amundi, addresses this gap.
  
