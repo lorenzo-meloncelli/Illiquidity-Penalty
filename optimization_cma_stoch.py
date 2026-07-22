@@ -892,7 +892,6 @@ plt.savefig('Power_composition.png', dpi=150, bbox_inches='tight')
 plt.show()
 
 
-
 #%%
 """
 ============================================================
@@ -902,9 +901,13 @@ IPOTESI C: payout proporzionale da tutti gli asset
   - Liberi: no haircut
   - Locked: haircut specifico, peso ridotto (opzione A)
 
-FIX 2a : restore_liquid_buffer vende prima illiquidi liberi
-FIX 2b : restore_liquid_buffer distribuisce proventi su w_target
-FIX 4  : alpha_marginal = alpha_est * (beta_est + 1)
+NOVITÀ: payout stocastico AR(1) correlato a GLOB_EQ
+  delta_t = clip(
+      delta_bar
+      + rho_AR * (delta_{t-1} - delta_bar)
+      + sigma_delta * (rho * z_EQ_t + sqrt(1-rho^2) * eps_t),
+      delta_min, delta_max
+  )
 ============================================================
 """
 
@@ -914,14 +917,14 @@ import numpy as np
 # ============================================================
 # 1.  PARAMETERS
 # ============================================================
+
 pi       = 0.03
-mu_base  = mu.copy()   # stripping OFF — mu lordi
+mu_base  = mu.copy()
 
 T_years      = 20
 N_scen       = 1000
-delta        = 0.1 # 10%, 5%, 3% 
-gamma_fix    = 5 # 5, 3, 2
-w_min_liquid = 0.4 # 40%, 30%, 20% 
+gamma_fix    = 2 # 5, 3, 2 
+w_min_liquid = 0.2 # 40%, 30%, 20% 
 
 haircut_by_asset = np.array([
     0.001,   # MM_US
@@ -938,18 +941,67 @@ lockup_years = np.array([0, 0, 0, 2, 5, 8])
 L_levels           = np.array([0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.65, 0.70])
 L_levels_requested = L_levels.copy()
 
+# ============================================================
+# 2.  STOCHASTIC PAYOUT PARAMETERS — AR(1) + correlazione GLOB_EQ
+# ============================================================
+
+# Indice di GLOB_EQ nel vettore degli asset (da CP1)
+idx_EQ = 2   # GLOB_EQ è il terzo asset
+
+# Parametri per archetipo — dizionario
+payout_params = {
+    'Fondo Pensione': {
+        'delta_bar'   : 0.10,
+        'sigma_delta' : 0.025,
+        'rho_AR'      : 0.65,
+        'rho'         : -0.60,
+        'delta_min'   : 0.03,
+        'delta_max'   : 0.18,
+    },
+    'Endowment': {
+        'delta_bar'   : 0.05,
+        'sigma_delta' : 0.015,
+        'rho_AR'      : 0.55,
+        'rho'         : -0.35,
+        'delta_min'   : 0.02,
+        'delta_max'   : 0.09,
+    },
+    'Family Office': {
+        'delta_bar'   : 0.04,
+        'sigma_delta' : 0.02,
+        'rho_AR'      : 0.35,
+        'rho'         : -0.2,
+        'delta_min'   : 0.00,
+        'delta_max'   : 0.1,
+    },
+}
+
+# Archetipo attivo per CP5
+active_archetype = 'Family Office'
+pp = payout_params[active_archetype]
+
+delta_bar   = pp['delta_bar']
+sigma_delta = pp['sigma_delta']
+rho_AR      = pp['rho_AR']
+rho_payout  = pp['rho']
+delta_min   = pp['delta_min']
+delta_max   = pp['delta_max']
+
 print("=" * 65)
 print("  CHECKPOINT 5 — Parameters")
 print("=" * 65)
-print(f"  Ipotesi C: payout proporzionale da tutti gli asset")
-print(f"  Stripping              : OFF  (mu_base = mu)")
-print(f"  pi                     : {pi:.2%}")
-print(f"  gamma (fixed)          : {gamma_fix}")
-print(f"  Horizon                : {T_years} years")
-print(f"  Scenarios              : {N_scen}")
-print(f"  Annual payout delta    : {delta:.2%}")
-print(f"  Min liquid weight      : {w_min_liquid:.0%}")
-print(f"  Liquid mask (l<=0.125) : "
+print(f"  Ipotesi C      : payout proporzionale da tutti gli asset")
+print(f"  Archetipo      : {active_archetype}")
+print(f"  delta_bar      : {delta_bar:.2%}")
+print(f"  sigma_delta    : {sigma_delta:.2%}")
+print(f"  rho_AR         : {rho_AR:.2f}")
+print(f"  rho_payout     : {rho_payout:.2f}  (correlazione con GLOB_EQ)")
+print(f"  delta_min/max  : [{delta_min:.2%}, {delta_max:.2%}]")
+print(f"  gamma (fixed)  : {gamma_fix}")
+print(f"  Horizon        : {T_years} years")
+print(f"  Scenarios      : {N_scen}")
+print(f"  Min liquid     : {w_min_liquid:.0%}")
+print(f"  Liquid mask    : "
       f"{[asset_names[i] for i in range(n) if liquid_mask[i]]}")
 print(f"\n  {'Asset':<14} {'mu':>6} {'l':>6} "
       f"{'lockup':>7} {'haircut':>8}")
@@ -959,7 +1011,39 @@ for i in range(n):
           f"{lockup_years[i]:>6}yr {haircut_by_asset[i]:>8.1%}")
 
 # ============================================================
-# 2.  CONSTRAINED MVO — one portfolio per L level
+# 3.  STOCHASTIC PAYOUT PROCESS
+# ============================================================
+
+def sample_delta(delta_prev, z_EQ_t, rng,
+                 delta_bar, sigma_delta, rho_AR, rho_payout,
+                 delta_min, delta_max):
+    """
+    Campiona delta_t dal processo AR(1) correlato a GLOB_EQ.
+
+    delta_t = clip(
+        delta_bar
+        + rho_AR * (delta_{t-1} - delta_bar)
+        + sigma_delta * (rho * z_EQ_t + sqrt(1-rho^2) * eps_t),
+        delta_min, delta_max
+    )
+
+    Parameters
+    ----------
+    delta_prev  : float  — payout dell'anno precedente
+    z_EQ_t      : float  — shock standardizzato di GLOB_EQ (da z_t[idx_EQ])
+    rng         : np.random.Generator
+    """
+    eps_t     = rng.standard_normal()
+    eta_t     = sigma_delta * (rho_payout * z_EQ_t
+                               + np.sqrt(1.0 - rho_payout**2) * eps_t)
+    delta_t   = (delta_bar
+                 + rho_AR * (delta_prev - delta_bar)
+                 + eta_t)
+    return float(np.clip(delta_t, delta_min, delta_max))
+
+
+# ============================================================
+# 4.  CONSTRAINED MVO — one portfolio per L level
 # ============================================================
 
 def build_target_portfolio(L_target, gamma, mu_b, Sig, l_vec,
@@ -1050,7 +1134,7 @@ print(f"\n  Valid L levels : {[f'{L:.0%}' for L in L_levels]}")
 print(f"  Total used     : {len(L_levels)} / {len(L_levels_requested)}")
 
 # ============================================================
-# 3.  TRANCHE HELPERS
+# 5.  TRANCHE HELPERS
 # ============================================================
 
 def init_tranches(w_target, t_now=0):
@@ -1128,27 +1212,15 @@ def rebalance_constrained(tranches, w_target, t_now, lku, n_assets,
                                  'bought_at': t_now})
     return new_tranches
 
+
 # ============================================================
-# 4.  PAYOUT HANDLER — IPOTESI C
+# 6.  PAYOUT HANDLER — IPOTESI C
 # ============================================================
 
 def handle_payout(tranches, payout, t_now, lku, n_assets, hc_by_asset):
     """
     Payout proporzionale da TUTTI gli asset (Ipotesi C).
-
-    Ogni asset contribuisce al payout in proporzione al suo peso.
-      - Liberi:  vendita senza costo, peso ridotto.
-      - Locked:  vendita con haircut, peso ridotto (opzione A).
-                 gross = quota / (1 - haircut)
-                 cost_forced += gross * haircut
-
-    Effetto: i pesi relativi post-payout rimangono vicini
-    a w_post_drift. Il payout tilt scompare.
-    c_hat misura solo i costi degli haircut sui locked.
-
-    Returns:
-        tranches    : lista aggiornata
-        cost_forced : costo haircut totale sui locked
+    Liberi: no haircut. Locked: haircut, peso ridotto (op. A).
     """
     w_total     = sum(tr['weight'] for tr in tranches)
     cost_forced = 0.0
@@ -1156,15 +1228,11 @@ def handle_payout(tranches, payout, t_now, lku, n_assets, hc_by_asset):
     for tr in tranches:
         i   = tr['asset']
         age = t_now - tr['bought_at']
-
-        # quota proporzionale di questa tranche al payout
         quota = (tr['weight'] / w_total) * payout
 
         if age >= lku[i]:
-            # libero: vendo senza costo
             tr['weight'] -= quota
         else:
-            # locked: vendo con haircut (opzione A)
             gross        = quota / (1.0 - hc_by_asset[i])
             cost_forced += gross * hc_by_asset[i]
             tr['weight'] -= gross
@@ -1177,8 +1245,9 @@ def handle_payout(tranches, payout, t_now, lku, n_assets, hc_by_asset):
 
     return tranches, cost_forced
 
+
 # ============================================================
-# 5.  RESTORE LIQUID BUFFER — FIX 2a + 2b
+# 7.  RESTORE LIQUID BUFFER
 # ============================================================
 
 def restore_liquid_buffer(tranches, t_now, lku, n_assets,
@@ -1186,16 +1255,8 @@ def restore_liquid_buffer(tranches, t_now, lku, n_assets,
                           w_target):
     """
     Ricostituisce il buffer liquido se scende sotto w_min_liq.
-
-    FIX 2a: vende prima illiquidi LIBERI (no haircut),
-            poi illiquidi LOCKED (con haircut).
-    FIX 2b: proventi distribuiti su MM/AGG/EQ
-            in proporzione a w_target.
-
-    Con payout proporzionale (Ipotesi C) i liquidi scendono
-    meno rispetto al codice precedente, quindi il restore
-    scatta meno frequentemente. Quando scatta misura
-    un costo reale aggiuntivo.
+    FIX 2a: vende prima illiquidi liberi (no haircut).
+    FIX 2b: proventi distribuiti su w_target dei liquidi.
     """
     w_current = np.zeros(n_assets)
     for tr in tranches:
@@ -1257,7 +1318,7 @@ def restore_liquid_buffer(tranches, t_now, lku, n_assets,
             tr['weight'] -= gross
             need         -= proceeds
 
-    # FIX 2b: proventi proporzionale a w_target dei liquidi
+    # FIX 2b: proventi proporzionali a w_target dei liquidi
     added       = shortfall - need
     liq_tgt     = w_target[liquid_mask]
     liq_tgt_sum = liq_tgt.sum()
@@ -1287,85 +1348,104 @@ def restore_liquid_buffer(tranches, t_now, lku, n_assets,
 
 print("\n  Part 1 complete.")
 
-
 #%%
 """
 ============================================================
 CHECKPOINT 5 (Part 2) — Simulation, Aggregation & Fitting
 ============================================================
-IPOTESI C: payout proporzionale da tutti gli asset.
+NOVITÀ: payout stocastico AR(1) correlato a GLOB_EQ.
 
-BENCHMARK:
-  Stesso fondo tutto liquido.
-  r_bench = w_bd @ r_t  (post-drift).
+  delta_t = clip(
+      delta_bar
+      + rho_AR * (delta_{t-1} - delta_bar)
+      + sigma_delta * (rho * z_EQ_t + sqrt(1-rho^2) * eps_t),
+      delta_min, delta_max
+  )
 
-COSTO ANNO t:
-  cost_t = (r_bench - r_actual)
-           + cost_hc
-           + cost_forced_payout
-
-FITTING:
-  La simulazione produce c_hat(L) ≈ T(L)/L.
-  Si calcola T_hat(L) = c_hat(L) * L e si fitta:
-    T_hat = A * L^B
-  Da cui si ricavano i parametri di c(L) = alpha * L^beta:
-    beta  = B - 1
-    alpha = A * B
-  Questo e' matematicamente equivalente a fittare c_hat
-  con correzione FIX 4, ma piu' diretto e trasparente.
+z_EQ_t è lo shock standardizzato di GLOB_EQ estratto
+prima di applicare Chol — già disponibile nel ciclo.
 ============================================================
 """
 
 import matplotlib.pyplot as plt
 
 # ============================================================
-# 4.  SINGLE SCENARIO
+# 1.  SINGLE SCENARIO
 # ============================================================
 
 def simulate_scenario(w_target, L_target, rng):
     """
-    Simula uno scenario di T_years anni con Ipotesi C.
+    Simula uno scenario di T_years anni con Ipotesi C
+    e payout stocastico AR(1) correlato a GLOB_EQ.
 
-    IPOTESI C: payout proporzionale da tutti gli asset.
-      Liberi: no haircut. Locked: haircut, peso ridotto (op. A).
+    Sequenza per ogni anno t:
+      A. Estrai z_t  (shock standardizzati indipendenti)
+      B. Calcola r_t = mu_base + Chol @ z_t
+      C. Estrai z_EQ_t = z_t[idx_EQ]  — shock grezzo GLOB_EQ
+      D. Campiona delta_t dal processo AR(1)
+      E. Drift del portafoglio
+      F. Payout proporzionale (Ipotesi C)
+      G. Restore liquid buffer
+      H. Calcola costo anno t  (PRE-rebalancing)
+      I. Rebalancing vincolato
 
-    BENCHMARK: r_bench = w_bd @ r_t  (post-drift).
-    r_actual calcolato PRE-rebalancing.
-    Rebalancing eseguito DOPO il calcolo del costo.
-
-    Returns:
-        float: costo medio annuo su T_years anni
+    Returns
+    -------
+    float : costo medio annuo su T_years anni
     """
     chol     = np.linalg.cholesky(Sigma)
     tranches = init_tranches(w_target, t_now=0)
     w_bench  = w_target.copy()
     costs    = []
 
+    # condizione iniziale payout
+    delta_prev = delta_bar
+
     for t in range(1, T_years + 1):
 
-        # ── A. Rendimenti realizzati ──────────────────────────────────
-        r_t = mu_base + chol @ rng.standard_normal(n)
+        # ── A. Shock standardizzati indipendenti ──────────────────────
+        z_t    = rng.standard_normal(n)
 
-        # ── B. BENCHMARK — post-drift ─────────────────────────────────
+        # ── B. Rendimenti realizzati ──────────────────────────────────
+        r_t    = mu_base + chol @ z_t
+
+        # ── C. Shock grezzo di GLOB_EQ ────────────────────────────────
+        z_EQ_t = float(z_t[idx_EQ])
+
+        # ── D. Payout stocastico AR(1) ────────────────────────────────
+        delta_t = sample_delta(
+            delta_prev  = delta_prev,
+            z_EQ_t      = z_EQ_t,
+            rng         = rng,
+            delta_bar   = delta_bar,
+            sigma_delta = sigma_delta,
+            rho_AR      = rho_AR,
+            rho_payout  = rho_payout,
+            delta_min   = delta_min,
+            delta_max   = delta_max,
+        )
+        delta_prev = delta_t
+
+        # ── E. Benchmark post-drift ───────────────────────────────────
         w_bd    = w_bench * (1.0 + r_t)
         w_bd   /= w_bd.sum()
         r_bench = float(w_bd @ r_t)
         w_bench = w_target.copy()
 
-        # ── C1. Portafoglio reale: drift ──────────────────────────────
+        # ── F. Drift portafoglio reale ────────────────────────────────
         tranches = apply_drift(tranches, r_t)
 
-        # ── C2. Payout proporzionale  [IPOTESI C] ─────────────────────
+        # ── G. Payout proporzionale [Ipotesi C] ───────────────────────
         tranches, cost_forced_payout = handle_payout(
-            tranches, delta, t, lockup_years, n, haircut_by_asset)
+            tranches, delta_t, t, lockup_years, n, haircut_by_asset)
 
-        # ── C3. Restore buffer  [FIX 2a + 2b] ────────────────────────
+        # ── H. Restore buffer ─────────────────────────────────────────
         tranches, cost_hc = restore_liquid_buffer(
             tranches, t, lockup_years, n,
             liquid_mask, w_min_liquid, haircut_by_asset,
             w_target)
 
-        # ── D. COSTO — PRE-rebalancing ────────────────────────────────
+        # ── I. Costo PRE-rebalancing ──────────────────────────────────
         w_actual = np.zeros(n)
         for tr in tranches:
             w_actual[tr['asset']] += tr['weight']
@@ -1373,19 +1453,24 @@ def simulate_scenario(w_target, L_target, rng):
 
         costs.append((r_bench - r_actual) + cost_hc + cost_forced_payout)
 
-        # ── C4. Rebalancing vincolato — DOPO il costo ─────────────────
+        # ── J. Rebalancing vincolato DOPO il costo ────────────────────
         tranches = rebalance_constrained(
             tranches, w_target, t, lockup_years, n,
             liquid_mask, w_min_liquid)
 
     return float(np.mean(costs))
 
+
+
 # ============================================================
-# 5.  MAIN SIMULATION LOOP
+# 2.  MAIN SIMULATION LOOP
 # ============================================================
 
 print("=" * 65)
 print("  CHECKPOINT 5 (Part 2) — Running Simulations")
+print(f"  Archetipo : {active_archetype}")
+print(f"  delta_bar={delta_bar:.2%}  sigma_delta={sigma_delta:.2%}")
+print(f"  rho_AR={rho_AR:.2f}  rho_payout={rho_payout:.2f}")
 print("  Ipotesi C: payout proporzionale, r_bench post-drift")
 print("=" * 65)
 
@@ -1405,18 +1490,7 @@ for Lv in L_levels:
           f"  (std err: {std_err*100:.4f}%,  N={N_scen})")
 
 # ============================================================
-# 6.  FITTING  T(L) = A * L^B  ->  ricava alpha e beta
-# ============================================================
-# La simulazione produce c_hat(L) ≈ T(L)/L.
-# T_hat(L) = c_hat(L) * L  e' la stima diretta di T(L).
-#
-# Fittiamo: T_hat = A * L^B
-#
-# Per una power function T(L) = alpha/(beta+1) * L^(beta+1):
-#   A    = alpha/(beta+1)
-#   B    = beta+1
-#   beta  = B - 1
-#   alpha = A * B
+# 3.  FITTING  T(L) = A * L^B  ->  ricava alpha e beta
 # ============================================================
 
 L_arr       = np.array(list(c_hat.keys()))
@@ -1437,9 +1511,8 @@ popt, pcov = curve_fit(
 A_est, B_est = popt
 perr         = np.sqrt(np.diag(pcov))
 
-beta_est       = B_est - 1.0
-alpha_est      = A_est * B_est
-alpha_marginal = alpha_est   # gia' il valore corretto, nessuna correzione
+beta_est  = B_est - 1.0
+alpha_est = A_est * B_est
 
 T_pred = T_function(L_arr, *popt)
 ss_res = np.sum((T_hat_fit - T_pred) ** 2)
@@ -1449,13 +1522,12 @@ r2     = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
 print("\n" + "=" * 65)
 print("  FITTING RESULTS  —  T(L) = A * L^B")
 print("=" * 65)
-print(f"  Fit su T_hat = c_hat * L:")
 print(f"  A_est  = {A_est:.6f}  (std err: {perr[0]:.6f})")
 print(f"  B_est  = {B_est:.4f}   (std err: {perr[1]:.4f})")
 print(f"  R²     = {r2:.6f}")
 print(f"\n  Parametri ricavati:")
-print(f"  beta   = B - 1   = {B_est:.4f} - 1   = {beta_est:.4f}")
-print(f"  alpha  = A * B   = {A_est:.6f} * {B_est:.4f} = {alpha_est:.6f}")
+print(f"  beta   = B - 1   = {beta_est:.4f}")
+print(f"  alpha  = A * B   = {alpha_est:.6f}")
 print(f"\n  c(L) = {alpha_est:.6f} * L^{beta_est:.4f}")
 print(f"  T(L) = {A_est:.6f} * L^{B_est:.4f}")
 print(f"\n  Verifica A = alpha/(beta+1):")
@@ -1465,41 +1537,45 @@ print(f"  {alpha_est:.6f} / {beta_est+1:.4f} = "
 print(f"\n  -> alpha={alpha_est:.4f}, beta={beta_est:.4f} usati in CP6")
 
 # ============================================================
-# 7.  VISUALISATION
+# 4.  VISUALISATION
 # ============================================================
 
 L_plot      = np.linspace(0.05, 0.75, 300)
 comp_colors = ['#264653','#2A9D8F','#E9C46A','#F4A261','#E76F51','#9B2226']
 
-# curve per il grafico
 c_plot = alpha_est * L_plot**beta_est
 T_plot = A_est * L_plot**B_est
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 6))
 fig.suptitle(
     f"Simulated Illiquidity Costs & Fitted Penalty Curve\n"
+    f"Archetipo: {active_archetype}  |  "
     f"A={A_est:.4f}  B={B_est:.4f}  R²={r2:.4f}  "
-    f"alpha={alpha_est:.4f}  beta={beta_est:.4f}  |  "
-    f"delta={delta:.0%},  T={T_years}yr,  N={N_scen},  "
-    f"min_liq={w_min_liquid:.0%}",
-    fontsize=10, fontweight='bold'
+    f"alpha={alpha_est:.4f}  beta={beta_est:.4f}\n"
+    f"delta_bar={delta_bar:.2%}  sigma_delta={sigma_delta:.2%}  "
+    f"rho_AR={rho_AR:.2f}  rho_payout={rho_payout:.2f}  "
+    f"T={T_years}yr  N={N_scen}",
+    fontsize=9, fontweight='bold'
 )
 
-# ── Panel 2: T_hat simulato + T(L) fittata ────────────────
+# ── Panel 1: T_hat simulato + T(L) fittata ────────────────
 ax = axes[0]
-ax.scatter(L_arr * 100, T_hat_arr * 100, s=100, color="#E63946",
-           zorder=5, label='$T_{hat}(L) = \\hat{c}(L) \\cdot L$')
-ax.plot(L_plot * 100, T_plot * 100, color="#264653", lw=2.2,
+ax.scatter(L_arr * 100, T_hat_arr * 100,
+           s=100, color="#E63946", zorder=5,
+           label=r'$\hat{T}(L) = \hat{c}(L) \cdot L$  (simulato)')
+ax.plot(L_plot * 100, T_plot * 100,
+        color="#264653", lw=2.2,
         label=f'$T(L) = A \\cdot L^B$  '
               f'(A={A_est:.4f}, B={B_est:.4f}, $R^2$={r2:.3f})')
 ax.set_xlabel("Portfolio Illiquidity Level L (%)", fontsize=11)
 ax.set_ylabel("Accumulated Penalty T(L) (%)", fontsize=11)
 ax.set_title("T(L) — Penalità Accumulata", fontsize=10)
-ax.set_ylim(0, 1.0)
+ax.set_ylim(bottom=0)
+ax.set_ylim(top=1)
 ax.legend(fontsize=9)
 ax.grid(True, alpha=0.3)
 
-# ── Panel 3: composizione target portfolios per L ─────────
+# ── Panel 2: composizione target portfolios per L ─────────
 ax = axes[1]
 L_labels = [f"{Lv:.0%}" for Lv in L_levels]
 W_matrix = np.array([target_portfolios[Lv] for Lv in L_levels])
@@ -1520,16 +1596,17 @@ plt.tight_layout()
 import os
 os.makedirs('Simulations', exist_ok=True)
 plt.savefig(
-    f"Simulations/Fit_{round(alpha_est*100)}_{round(beta_est*100)}.png",
+    f"Simulations/Fit_{active_archetype.replace(' ','_')}"
+    f"_{round(alpha_est*100)}_{round(beta_est*100)}.png",
     dpi=150, bbox_inches='tight')
 plt.show()
 
 print(f"\n  Checkpoint 5 complete.")
-print(f"  -> alpha = {alpha_est:.4f}  (= A*B, costo marginale)")
-print(f"  -> beta  = {beta_est:.4f}  (= B-1)")
-print(f"  -> A     = {A_est:.4f}   (coeff di T)")
-print(f"  -> B     = {B_est:.4f}   (esp di T = beta+1)")
-
+print(f"  Archetipo  : {active_archetype}")
+print(f"  -> alpha   = {alpha_est:.4f}")
+print(f"  -> beta    = {beta_est:.4f}")
+print(f"  -> A       = {A_est:.4f}")
+print(f"  -> B       = {B_est:.4f}")
 
 
 #%%
@@ -1539,6 +1616,7 @@ CHECKPOINT 5.5 — Save Simulation Log
 ============================================================
 Salva un log completo di CP5: parametri, target portfolios,
 costi simulati, A, B (fit su T), alpha e beta ricavati.
+NOVITÀ: include parametri del payout stocastico AR(1).
 ============================================================
 """
 
@@ -1567,19 +1645,27 @@ with open(log_path, 'w', encoding='utf-8') as f:
     f.write("  Benchmark  : stesso fondo tutto liquido\n")
     f.write("               r_bench = w_bd @ r_t  (pesi post-drift)\n")
     f.write("  r_actual   : calcolato PRE-rebalancing\n")
-    f.write("               pesi dopo drift + payout + restore\n")
     f.write("  Rebalancing: eseguito DOPO il calcolo del costo\n\n")
     f.write("  Costo anno t:\n")
     f.write("    cost_t = (r_bench - r_actual)\n")
     f.write("             + cost_hc             (haircut restore buffer)\n")
     f.write("             + cost_forced_payout   (haircut payout locked)\n\n")
+    f.write("  Payout stocastico AR(1) correlato a GLOB_EQ:\n")
+    f.write("    delta_t = clip(\n")
+    f.write("        delta_bar\n")
+    f.write("        + rho_AR * (delta_{t-1} - delta_bar)\n")
+    f.write("        + sigma_delta * (rho * z_EQ_t + sqrt(1-rho^2) * eps_t),\n")
+    f.write("        delta_min, delta_max\n")
+    f.write("    )\n")
+    f.write("    z_EQ_t  : shock standardizzato di GLOB_EQ (z_t[idx_EQ])\n")
+    f.write("    eps_t   : shock idiosincratico N(0,1) indipendente\n\n")
     f.write("  Fitting:\n")
-    f.write("    La simulazione produce c_hat(L) ≈ T(L)/L.\n")
+    f.write("    La simulazione produce c_hat(L) ~ T(L)/L.\n")
     f.write("    Si calcola T_hat(L) = c_hat(L) * L.\n")
     f.write("    Si fitta: T_hat = A * L^B\n")
     f.write("    Si ricavano alpha e beta:\n")
     f.write("      beta  = B - 1\n")
-    f.write("      alpha = A * B   (= alpha del costo marginale c(L))\n\n")
+    f.write("      alpha = A * B\n\n")
 
     # ── Fixes applicati ──────────────────────────────────────
     f.write("FIXES APPLIED\n")
@@ -1591,14 +1677,31 @@ with open(log_path, 'w', encoding='utf-8') as f:
     f.write("  FIX bench: r_bench = w_bd @ r_t  (pesi post-drift)\n")
     f.write("  FIX r_act: r_actual calcolato PRE-rebalancing\n")
     f.write("  FIX fit  : fit su T_hat = c_hat*L invece di c_hat\n")
-    f.write("             alpha e beta ricavati da A e B analiticamente\n\n")
+    f.write("  NOVITÀ   : payout stocastico AR(1) correlato a GLOB_EQ\n\n")
 
-    # ── Parameters ───────────────────────────────────────────
+    # ── Payout stocastico ─────────────────────────────────────
+    f.write("PAYOUT STOCASTICO — AR(1) + CORRELAZIONE GLOB_EQ\n")
+    f.write("-" * 40 + "\n")
+    f.write(f"  Archetipo      : {active_archetype}\n")
+    f.write(f"  delta_bar      : {delta_bar:.2%}\n")
+    f.write(f"  sigma_delta    : {sigma_delta:.2%}\n")
+    f.write(f"  rho_AR         : {rho_AR:.2f}\n")
+    f.write(f"  rho_payout     : {rho_payout:.2f}  (correlazione con GLOB_EQ)\n")
+    f.write(f"  delta_min      : {delta_min:.2%}\n")
+    f.write(f"  delta_max      : {delta_max:.2%}\n")
+    f.write(f"  idx_EQ         : {idx_EQ}  ({asset_names[idx_EQ]})\n\n")
+    f.write("  Tutti gli archetipi disponibili:\n")
+    for arch, params in payout_params.items():
+        f.write(f"  {arch}:\n")
+        for k, v in params.items():
+            f.write(f"    {k:<14} : {v}\n")
+    f.write("\n")
+
+    # ── Simulation Parameters ────────────────────────────────
     f.write("SIMULATION PARAMETERS\n")
     f.write("-" * 40 + "\n")
     f.write(f"  T_years        : {T_years}\n")
     f.write(f"  N_scen         : {N_scen}\n")
-    f.write(f"  delta          : {delta:.2%}\n")
     f.write(f"  gamma_fix      : {gamma_fix}\n")
     f.write(f"  w_min_liquid   : {w_min_liquid:.0%}\n")
     f.write(f"  pi (stripping) : {pi:.2%}  [stripping OFF — mu_base = mu]\n")
@@ -1652,13 +1755,13 @@ with open(log_path, 'w', encoding='utf-8') as f:
     for Lv in L_levels:
         c_val = c_hat[Lv]
         T_val = c_val * Lv
-        f.write(f"  {Lv:>6.0%}  {c_val*100:>10.4f}%  {T_val*100:>12.4f}%\n")
+        f.write(f"  {Lv:>6.0%}  {c_val*100:>10.4f}%  "
+                f"{T_val*100:>12.4f}%\n")
     f.write("\n")
 
     # ── Fitting Results ──────────────────────────────────────
     f.write("FITTING RESULTS  —  T(L) = A * L^B\n")
     f.write("-" * 40 + "\n")
-    f.write(f"  Fit su T_hat = c_hat * L:\n")
     f.write(f"  A_est          : {A_est:.6f}  (std err: {perr[0]:.6f})\n")
     f.write(f"  B_est          : {B_est:.4f}   (std err: {perr[1]:.4f})\n")
     f.write(f"  R²             : {r2:.6f}\n\n")
@@ -1680,7 +1783,6 @@ with open(log_path, 'w', encoding='utf-8') as f:
 
 print(f"  Log saved to: {log_path}")
 
-
 #%%
 """
 ============================================================
@@ -1692,20 +1794,6 @@ Builds two efficient frontiers:
   2. Penalized MVO    (Hayes et al. 2015)
 
 Uses alpha_est and beta_est from CP5 namespace.
-These are derived from fitting T(L) = A * L^B directly:
-  beta  = B - 1
-  alpha = A * B   (= alpha of marginal cost c(L) = alpha * L^beta)
-
-No further correction needed — alpha is already the
-marginal cost parameter by construction.
-
-Plots:
-  Figure 1:
-    - Panel 1: Efficient frontiers gross return
-    - Panel 2: Efficient frontiers net return  mu_P - T(L)
-  Figure 2:
-    - Panel 1: Portfolio composition unpenalized
-    - Panel 2: Portfolio composition penalized
 ============================================================
 """
 
@@ -1717,25 +1805,26 @@ import os
 # ============================================================
 # 1.  PENALTY FUNCTIONS FROM CP5
 # ============================================================
-# Uses alpha_est and beta_est from CP5 namespace.
-# alpha_est = A * B  (marginal cost parameter)
-# beta_est  = B - 1
-#
-# If running standalone, set manually:
-#   alpha_est = 0.10
-#   beta_est  = 1.5
 
 def c_sim(L):
     """Marginal cost c(L) = alpha * L^beta."""
     return alpha_est * np.power(np.maximum(L, 1e-10), beta_est)
 
 def T_sim(L):
-    """Accumulated penalty T(L) = integral_0^L c(x) dx
-       = alpha/(beta+1) * L^(beta+1)
-       = A * L^B   (equivalent, same A and B from fit)
-    """
+    """Accumulated penalty T(L) = alpha/(beta+1) * L^(beta+1)."""
     return (alpha_est / (beta_est + 1.0)) * \
            np.power(np.maximum(L, 1e-10), beta_est + 1.0)
+
+def T_none(L):
+    return 0.0
+
+print("=" * 65)
+print("  CHECKPOINT 6 — Penalized Frontier")
+print(f"  alpha = {alpha_est:.4f}  (= A*B from CP5 fit)")
+print(f"  beta  = {beta_est:.4f}  (= B-1 from CP5 fit)")
+print(f"  c(L)  = {alpha_est:.4f} * L^{beta_est:.4f}")
+print(f"  T(L)  = {A_est:.4f} * L^{B_est:.4f}")
+print("=" * 65)
 
 # ============================================================
 # 2.  OPTIMIZER
@@ -1787,9 +1876,6 @@ def optimize_portfolio(gamma, mu, Sigma, T_fn, l,
 # 3.  BUILD FRONTIERS
 # ============================================================
 
-def T_none(L):
-    return 0.0
-
 gamma_grid = np.concatenate([
     np.linspace(0.05, 0.5,  10),
     np.linspace(0.5,  3.0,  20),
@@ -1802,14 +1888,6 @@ frontier_specs = [
     ('Unpenalized', T_none, '#333333', '--'),
     ('Penalized',   T_sim,  '#E63946', '-' ),
 ]
-
-print("=" * 65)
-print("  CHECKPOINT 6 — Penalized Frontier")
-print(f"  alpha = {alpha_est:.4f}  (= A*B from CP5 fit)")
-print(f"  beta  = {beta_est:.4f}  (= B-1 from CP5 fit)")
-print(f"  c(L)  = {alpha_est:.4f} * L^{beta_est:.4f}")
-print(f"  T(L)  = {A_est:.4f} * L^{B_est:.4f}")
-print("=" * 65)
 
 results_cp6 = {}
 
@@ -1847,9 +1925,12 @@ comp_colors = ['#264653', '#2A9D8F', '#E9C46A', '#F4A261', '#E76F51', '#9B2226']
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 fig.suptitle(
     f"Penalized vs Unpenalized Frontier\n"
-    f"$\\alpha$={alpha_est:.4f}  $\\beta$={beta_est:.4f}  "
-    f"| T(L) = {A_est:.4f} $\\cdot$ $L^{{{B_est:.4f}}}$",
-    fontsize=12, fontweight='bold'
+    f"Archetipo: {active_archetype}  |  "
+    f"$\\alpha$={alpha_est:.4f}  $\\beta$={beta_est:.4f}  |  "
+    f"T(L) = {A_est:.4f} $\\cdot$ $L^{{{B_est:.4f}}}$\n"
+    f"delta_bar={delta_bar:.2%}  sigma_delta={sigma_delta:.2%}  "
+    f"rho_AR={rho_AR:.2f}  rho_payout={rho_payout:.2f}",
+    fontsize=10, fontweight='bold'
 )
 
 # ── Panel 1: Gross return ──────────────────────────────────
@@ -1881,7 +1962,8 @@ ax.grid(True, alpha=0.3)
 plt.tight_layout()
 os.makedirs('Simulations', exist_ok=True)
 plt.savefig(
-    f"Simulations/Sim_front_{round(alpha_est*100)}_{round(beta_est*100)}.png",
+    f"Simulations/Sim_front_{active_archetype.replace(' ','_')}"
+    f"_{round(alpha_est*100)}_{round(beta_est*100)}.png",
     dpi=150, bbox_inches='tight')
 plt.show()
 
@@ -1892,6 +1974,7 @@ plt.show()
 fig2, area_axes = plt.subplots(1, 2, figsize=(16, 6))
 fig2.suptitle(
     f"Portfolio Composition along the Frontier\n"
+    f"Archetipo: {active_archetype}  |  "
     f"$\\alpha$={alpha_est:.4f}  $\\beta$={beta_est:.4f}",
     fontsize=12, fontweight='bold'
 )
@@ -1931,18 +2014,20 @@ fig2.legend(handles, asset_names,
 
 plt.tight_layout(rect=[0, 0.04, 1, 1])
 plt.savefig(
-    f"Simulations/Sim_comp_{round(alpha_est*100)}_{round(beta_est*100)}.png",
+    f"Simulations/Sim_comp_{active_archetype.replace(' ','_')}"
+    f"_{round(alpha_est*100)}_{round(beta_est*100)}.png",
     dpi=150, bbox_inches='tight')
 plt.show()
 
 # ============================================================
-# 6.  PRINT PORTFOLIO SNAPSHOTS
+# 6.  PORTFOLIO SNAPSHOTS
 # ============================================================
 
 target_rets = [0.05, 0.065, 0.08]
 
 print("\n" + "=" * 90)
-print("  PORTFOLIO COMPOSITION AT SELECTED RETURN TARGETS")
+print(f"  PORTFOLIO COMPOSITION AT SELECTED RETURN TARGETS")
+print(f"  Archetipo: {active_archetype}")
 print("=" * 90)
 
 for label, info in results_cp6.items():
@@ -1959,9 +2044,14 @@ for label, info in results_cp6.items():
         row   = "  ".join(f"{wi:>10.1%}" for wi in w)
         print(f"  {tgt:>8.1%}  {row}  {lq:>6.1%}  {net_r:>8.3%}")
 
+print(f"\n  Checkpoint 6 complete.")
+print(f"  Archetipo  : {active_archetype}")
+print(f"  alpha      : {alpha_est:.4f}")
+print(f"  beta       : {beta_est:.4f}")
 
 
 #%%
+'''
 """
 ============================================================
 CHECKPOINT 7 — Penalty Sensitivity Matrix
@@ -2329,5 +2419,5 @@ fig_quad, _ = plot_penalty_sensitivity_matrix(
     figsize_cell = (2.8, 2.2),
     save_path    = "Sensitivity/quadratic.png",
 )
-
+'''
 # %%
