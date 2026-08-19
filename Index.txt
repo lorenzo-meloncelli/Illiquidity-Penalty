@@ -1,0 +1,57 @@
+Abstract ✅
+
+1 — Introduction ✅
+
+1.1 The illiquidity challenge in institutional asset allocation
+1.2 Existing approaches and their limitations
+1.3 The Hayes, Primbs and Chiquoine (2015) framework
+1.4 This paper's contribution
+1.5 Institutional context: Amundi Quant Solutions
+1.6 Structure of the paper
+2 — Theoretical Framework ✅
+
+2.1 Mean-Variance Optimization: setup and notation
+2.2 Illiquidity representation
+2.3 The marginal penalty function and the accumulated penalty
+2.4 The penalized optimization problem
+2.5 Illiquidity-adjusted expected returns
+2.6 The illiquidity surplus
+3 — Data and Asset Universe ✅
+
+3.1 Asset class universe and Capital Market Assumptions
+3.2 Illiquidity scoring
+3.3 Correlation structure
+4 — Functional Forms of the Penalty Curve ✅
+
+4.1 Power, Exponential and Quadratic: analytical properties
+4.2 Economic intuition and desirable properties
+4.3 Stability diagnostic
+4.4 Regime switches in optimal portfolio composition
+4.5 The power function as the reference case
+5 — Investor Archetypes and Penalty Curve Parametrization ⏳
+
+5.1 Determinants of the penalty curve shape
+5.2 Economic interpretation of the curve parameters
+5.3 The three archetypes: Pension Fund, Endowment, Family Office
+5.4 Subjective calibration and efficient frontiers
+5.5 Portfolio composition across archetypes
+6 — Simulation-Based Calibration of the Penalty Curve ⏳
+
+6.1 Simulation philosophy: real portfolio versus liquid benchmark
+6.2 Target portfolios
+6.3 Portfolio accounting and lock-up constraints
+6.4 Payout, haircuts and liquidity buffer
+6.5 Stochastic payout process: motivation and parametrization
+6.6 Estimating the simulated cost curve
+6.7 Fitting the penalty function and parameter recovery
+6.8 Results across archetypes
+7 — Penalized MVO: Results and Portfolio Implications ⏳
+
+7.1 Penalized versus unpenalized efficient frontiers
+7.2 Portfolio composition along the frontier
+7.3 Net return and illiquidity surplus
+8 — Conclusions ⏳
+
+8.1 Summary of contributions
+8.2 Limitations and future work
+References ⏳
