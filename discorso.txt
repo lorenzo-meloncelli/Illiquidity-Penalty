@@ -1,0 +1,62 @@
+[Slide 1] Buongiorno a tutti. Sono Lorenzo Meloncelli e oggi vi presento il mio lavoro di tesi, "Pricing Illiquidity in Strategic Asset Allocation: a calibration framework for practitioners". Il progetto è stato sviluppato in collaborazione con il team Quant Solutions di Amundi, con il quale ho lavorato negli ultimi mesi. Un ringraziamento va quindi alla dottoressa Gisimundo che, insieme al professor Barucci, mi ha seguito in questo percorso.
+
+[Slide 3] Il percorso ha cinque tappe: perché l'illiquidità ha bisogno di un prezzo; il framework di ottimizzazione con penalty; la calibrazione della penalty curve tramite simulazione; le implicazioni per la costruzione del portafoglio; e infine gli sviluppi futuri.
+
+[Slide 5] Prima di tutto, un asset è liquido se può essere convertito in cash rapidamente, a un prezzo vicino al fair value e con costi di transazione minimi: pensiamo a un titolo di stato a breve. È illiquido quando l'uscita è vincolata, perché non c'è un mercato secondario attivo oppure perché ci sono periodi di lock-up contrattuali che impediscono il rimborso anticipato. Private equity e real estate sono gli esempi classici.
+
+Questi asset hanno un ruolo ormai centrale: secondo Preqin, il peso medio dei private assets nei portafogli istituzionali è salito dal 16% degli AUM nel 2021 al 21% a fine 2025.
+
+La mean-variance optimization standard, però, tratta in modo simmetrico liquido e illiquido e ignora quattro costi:
+
+il rebalancing gap: i lock-up impediscono di tornare ai pesi target;
+le forced sales at a discount: se la parte liquida scende sotto il buffer minimo, si vendono posizioni illiquide sul mercato secondario con un haircut;
+il payout pressure: le distribuzioni vanno finanziate anche quando gli asset non sono smobilizzabili, e tendono ad aumentare proprio nei ribassi;
+la lost flexibility: non si può riallocare il capitale quando si presentano nuove opportunità.
+Questi costi non sono coperti dall'illiquidity premium, crescono in modo non lineare con l'illiquidità del portafoglio e dipendono dalla struttura dell'investitore.
+
+[Slide 6] La letteratura ha affrontato il problema in vari modi. Noi ci soffermiamo sul penalty cost approach di Hayes, Primbs e Chiquoine. Gli altri approcci sono computazionalmente pesanti e poco trasparenti per un investment committee, oppure assumono un costo marginale dell'illiquidità costante. Hayes et al. è invece convesso, definito a livello di portafoglio, specifico per investitore e comunica in termini di rendimento. 
+
+[Slide 7] Il framework inserisce una marginal penalty curve dentro la mean-variance optimization. La curva c(L) è il premio di rendimento che il prossimo incremento di illiquido deve garantire rispetto a un equivalente liquido. Come si vede dal grafico, tratto dal paper originale, la curva è diversa per ogni investitore, crescente e convessa: il costo marginale sale con l'illiquidità già presente nel portafoglio.
+Il paper si ferma qui: la penalty curve è lasciata al giudizio soggettivo. Questo è il gap che il mio lavoro colma.
+
+[Slide 8] Vediamo ora come questa curva entra nell'ottimizzazione.
+
+[Slide 10] Il paper originale non prescrive una forma funzionale. Ne ho confrontate tre: power, exponential e quadratic. Cerchiamo quattro proprietà: costo, totale e marginale, nullo a L = 0; costo marginale crescente e convesso; parametri interpretabili; ottimizzazione stabile. L'exponential non rispetta la prima, perché a L = 0 il costo marginale non è zero. Nella power, α fissa il livello complessivo della penalty e β ne governa la curvatura: con β basso i costi emergono presto e gradualmente, con β alto si tollerano livelli moderati di illiquidità, ma i costi esplodono quando si sale. La power ha anche un vantaggio analitico: il suo integrale è ancora una power.
+
+[Slide 11] Sottraiamo dalla funzione obiettivo l'accumulated penalty T(L), cioè l'integrale della curva. Nell'ottimizzazione compare così un terzo trade-off, oltre a rendimento e varianza: il costo dell'illiquidità. 
+
+[Slide 12] Qui vediamo cosa succede alla composizione lungo la frontiera. La penalty ridisegna l'allocazione: PE e PD si riducono, il range di rendimento si comprime e GLOB_EQ diventa il sostituto liquido. La slide mostra anche la stabilità: l'exponential comprime la frontiera in un range molto stretto, la quadratic produce spike erratici. Questo, insieme alle proprietà viste prima, è il motivo per cui scelgo la power.
+
+[Slide 14] Arriviamo al cuore del lavoro: passare da un giudizio soggettivo a una curva fondata sulle dinamiche del portafoglio.
+
+[Slide 15] L'idea è confrontare come evolvono due portfolio con la stessa composizione. Il real portfolio ha lock-up specifici per asset: le posizioni non si possono vendere prima della scadenza, o solo sul mercato secondario con un haircut. Il liquid benchmark è frictionless: fa rebalancing ogni anno e paga i payout a fair value. La differenza di rendimento tra i due portfolio è il costo dell'illiquidità e ha tre fonti. La prima è il rebalancing gap: i lock-up impediscono di tornare al target. La seconda sono gli haircut per ripristinare il buffer minimo di liquidità. La terza sono gli haircut sui payout, quando si devono smobilizzare posizioni in lock-up, spesso nei ribassi. Per ogni livello di illiquidità simulo 1.000 scenari su 20 anni, parametrizzati sulle Capital Market Assumptions di Amundi.
+
+[Slide 16] Il portafoglio ha un rendimento, che è quello spiegato dalle CMA, e deve sottostare a dei costi tipici dell'investitore. Le dinamiche sono quindi due. I rendimenti seguono una multivariate normal calibrata sulle CMA, quindi con le correlazioni tra asset class. Il payout annuo non è fisso: segue un processo AR(1) mean-reverting, correlato negativamente con l'equity, perché le uscite tendono ad aumentare proprio quando i mercati scendono. Ometterlo porterebbe a sottostimare il costo dell'illiquidità, soprattutto ai livelli alti, dove i due effetti si sommano.
+
+[Slide 17] Per i lock-up uso un sistema di tranche tracking che registra la data di acquisto di ogni posizione: una tranche è in lock-up finché non è trascorso il periodo previsto. Se la si vende prima, si paga un haircut specifico per asset. Per gli asset liquidi l'haircut non è altro che il bid-ask spread, tra 5 e 50 basis points. Per gli illiquidi sale con l'illiquidity index: 5% con 2 anni di lock-up per gli hedge fund, 12% con 5 anni per il PD e 20% con 8 anni per il PE. Quest'ultimo è coerente con l'evidenza sul mercato secondario del private equity, dove lo sconto medio sul NAV è già vicino al 14% in condizioni normali e sale nei periodi di stress.
+
+[Slide 18] Il ciclo annuale ha cinque passi. A. Estraggo i rendimenti di mercato, uguali per i due portfolio, così ogni differenza riflette solo i vincoli di illiquidità. B. Il portafoglio benchmark parte dai pesi target, che evolvono con i rendimenti di mercato, paga il payout a fair value, senza alcun haircut, e poi fa un full rebalancing. C. Il real portfolio realizza gli stessi rendimenti, paga il payout e, se serve, ripristina il buffer minimo di liquidità: in entrambi i casi, vendere posizioni ancora in lock-up costa un haircut. Poi fa rebalancing, ma solo entro i vincoli di lock-up e di buffer. D. Il costo annuo è la differenza di rendimento tra benchmark e real portfolio, che incorpora le tre fonti viste prima: il rebalancing vincolato e gli haircut pagati per il buffer e per i payout. E. Finito il loop, ho un punto per ogni livello di illiquidità, e su questi punti fitto la power per ricavare α e β.
+
+[Slide 19] Per rendere operativa la calibrazione ho definito tre archetipi.
+
+Il pension fund è il più vincolato: distribuzioni obbligatorie, riscatti anticipati nei momenti di stress, riserva di liquidità regolamentare. Ha payout medio del 10%, correlazione con l'equity di −0,60 e buffer minimo del 40%.
+L'endowment è intermedio: ha una spending rule che smussa i payout, donazioni regolari e passività di lunga duration. Ha payout del 5%, correlazione −0,35 e buffer del 30%.
+Il family office è il meno vincolato: nessun obbligo contrattuale. Ha payout del 4%, correlazione −0,20 e buffer del 20%.
+
+[Slide 20] Il fit della power è buono su tutti gli archetipi, con R² tra 0,98 e 0,99. Guardiamo ora come si muovono i parametri tra gli investitori. Il livello α diminuisce passando da pension fund a endowment a family office, da 0,27 a 0,13 a 0,08: più l'investitore è vincolato, più il costo dell'illiquidità è alto a ogni livello di L. La curvatura β, invece, aumenta leggermente, da 2,58 a 2,76 a 2,88: meno l'investitore è vincolato, più i costi si concentrano ad alti livelli di illiquidità e poi accelerano. Gli investitori si distinguono quindi soprattutto per il livello della penalty e meno per la sua forma. Rispetto alla calibrazione soggettiva, α è in linea, mentre β è più alto, soprattutto per pension fund ed endowment.
+
+[Slide 21] Vediamo cosa cambia nella costruzione del portafoglio.
+
+[Slide 23] Nel primo grafico, i punti rossi sono i costi simulati: per ogni livello di illiquidità, il costo medio annuo sui 1.000 scenari, moltiplicato per L, cioè la T(L) stimata. La linea è la power fittata su quei punti.
+Accanto ci sono le composizioni dei portafogli di partenza della simulazione, uno per ogni livello di illiquidità. Si vede come il mix si sposta dai liquidi verso PD e PE al crescere di L, nel rispetto del buffer minimo.
+Infine ci sono le due composizioni lungo la frontiera, non penalizzata e penalizzata. Senza penalty il PE domina ai rendimenti alti. Con la penalty, PD e PE si riducono, GLOB_EQ assorbe parte dell'esposizione azionaria e il rendimento massimo si ferma attorno all'8%.
+
+[Slide 24] Per l'endowment la lettura è la stessa, ma la curva è la più convessa. Sotto una certa soglia di illiquidità, le composizioni penalizzata e non penalizzata sono quasi identiche. Sopra la soglia, GLOB_EQ compare bruscamente e sostituisce PD e PE.
+
+[Slide 25] Il family office ha la penalty più mite. PD e PE dominano ai rendimenti alti in entrambi i casi, quindi per questo investitore la mean-variance optimization non penalizzata è già una buona approssimazione.
+
+[Slide 26] Questa slide riassume il risultato centrale. In termini gross, la frontiera penalizzata sta sotto quella non penalizzata e si ferma a un rendimento massimo inferiore. Ma il gross non è ciò che l'investitore trattiene. In termini net, cioè al netto dell'accumulated penalty, la frontiera penalizzata domina in tutti gli archetipi: chi ignora l'illiquidità costruisce portafogli con gross alto, ma l'illiquidità alta erode il net. Per il pension fund il vantaggio supera i 150 basis points, per l'endowment c'è un gap nella zona ad alta volatilità, per il family office la differenza è trascurabile.
+
+[Slide 27] Chiudo con gli sviluppi futuri.
+
+[Slide 29] Vedo tre direzioni. La prima è richer return dynamics: sostituire la multivariate normal con modelli regime-switching o stochastic volatility, per catturare fat tails e scenari di stress, dove il forced selling costa di più. La seconda è la liability-aware calibration: modellare esplicitamente attivo e passivo, con payout guidati da duration delle liabilities e funding ratio, così che la curva dipenda dal bilancio dell'investitore. La terza è towards production: integrare la calibrazione nella pipeline di SAA, aggiornare le curve a ogni release delle CMA e calibrare parametri specifici per i mandati.
